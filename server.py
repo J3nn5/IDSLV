@@ -118,6 +118,43 @@ last_prediction = {
 # CÁC HÀM CHỨC NĂNG
 #==============================================================================
 
+def format_analysis_time(seconds):
+    """
+    Định dạng thời gian phân tích thành dạng dễ đọc
+    
+    Parameters:
+    -----------
+    seconds : float
+        Thời gian tính bằng giây
+        
+    Returns:
+    --------
+    str
+        Chuỗi thời gian định dạng (ví dụ: "1d 2h 31' 45''")
+    """
+    if seconds < 0:
+        return "0''"
+    
+    # Tính toán các đơn vị thời gian
+    days = int(seconds // 86400)        # 1 ngày = 86400 giây
+    hours = int((seconds % 86400) // 3600)  # 1 giờ = 3600 giây
+    minutes = int((seconds % 3600) // 60)   # 1 phút = 60 giây
+    secs = int(seconds % 60)                # Giây còn lại
+    
+    # Tạo chuỗi kết quả
+    parts = []
+    
+    if days > 0:
+        parts.append(f"{days}d")
+    if hours > 0:
+        parts.append(f"{hours}h")
+    if minutes > 0:
+        parts.append(f"{minutes}'")
+    if secs > 0 or len(parts) == 0:  # Luôn hiển thị giây nếu không có đơn vị nào khác
+        parts.append(f"{secs}''")
+    
+    return " ".join(parts)
+
 def detect_attack_with_model(X_input, model_key):
     """
     Phát hiện tấn công với một model cụ thể
@@ -151,7 +188,6 @@ def detect_attack_with_model(X_input, model_key):
         # Điều chỉnh số lượng features nếu cần
         if X_scaled.shape[1] != expected_features:
             if X_scaled.shape[1] > expected_features:
-                # Trường hợp dữ liệu có nhiều features hơn cần thiết
                 print(f"⚠️ Số features ({X_scaled.shape[1]}) nhiều hơn yêu cầu của LSTM ({expected_features}), sẽ cắt bớt")
                 X_scaled = X_scaled[:, :expected_features]  # Chỉ lấy số lượng features cần thiết
             else:
@@ -297,6 +333,7 @@ def home():
                 </p>
                 <p><strong>Số bản ghi thông thường:</strong> {{ result.normal_count }} ({{ (result.normal_count/total_records*100)|round(2) }}%)</p>
                 <p><strong>Số bản ghi tấn công:</strong> {{ result.attack_count }} ({{ (result.attack_count/total_records*100)|round(2) }}%)</p>
+                <p><strong>⏱️ Thời gian phân tích:</strong> {{ result.analysis_time }}</p>
                 
                 {% if result.attack_types %}
                 <h5>Chi tiết loại tấn công:</h5>
@@ -318,36 +355,6 @@ def home():
             </div>
             {% endfor %}
             
-            <!-- Kết quả Ensemble -->
-            <div class="ensemble-section">
-                <h4 class="ensemble-title">Kết quả Tổng hợp (Ensemble)</h4>
-                <p>
-                    <strong>Tỉ lệ tấn công:</strong> 
-                    <span class="{{ 'attack-high' if ensemble_result.attack_percentage > 30 else 'attack-medium' if ensemble_result.attack_percentage > 10 else 'attack-low' }}">
-                        {{ ensemble_result.attack_percentage|round(2) }}%
-                    </span>
-                </p>
-                <p><strong>Số bản ghi thông thường:</strong> {{ ensemble_result.normal_count }} ({{ (ensemble_result.normal_count/total_records*100)|round(2) }}%)</p>
-                <p><strong>Số bản ghi tấn công:</strong> {{ ensemble_result.attack_count }} ({{ (ensemble_result.attack_count/total_records*100)|round(2) }}%)</p>
-                
-                {% if ensemble_result.attack_types %}
-                <h5>Chi tiết loại tấn công:</h5>
-                <table>
-                    <tr>
-                        <th>Loại tấn công</th>
-                        <th>Số lượng</th>
-                        <th>Tỉ lệ (%)</th>
-                    </tr>
-                    {% for attack_type, count in ensemble_result.attack_types.items() %}
-                    <tr>
-                        <td>{{ attack_type }}</td>
-                        <td>{{ count }}</td>
-                        <td>{{ (count/total_records*100)|round(2) }}%</td>
-                    </tr>
-                    {% endfor %}
-                </table>
-                {% endif %}
-            </div>
         </div>
         {% endif %}
     </body>
@@ -415,6 +422,9 @@ def upload_and_predict():
             print(f"🔍 Đang phân tích với model {model_key}...")
             
             try:
+                # Đo thời gian bắt đầu
+                model_start_time = time.time()
+
                 # Xử lý theo batch nếu dữ liệu lớn
                 BATCH_SIZE = 1000
                 all_labels = []              # Lưu nhãn dự đoán
@@ -427,6 +437,11 @@ def upload_and_predict():
                     all_labels.extend(batch_labels)
                     all_confidences.extend(batch_confidences)
                 
+                # Đo thời gian kết thúc
+                model_end_time = time.time()
+                analysis_time_seconds = model_end_time - model_start_time
+                analysis_time_formatted = format_analysis_time(analysis_time_seconds)
+
                 # Lưu tất cả dự đoán cho ensemble
                 all_predictions[model_key] = all_labels
                 
@@ -457,13 +472,18 @@ def upload_and_predict():
                     "attack_percentage": attack_percentage,
                     "attack_count": attack_count,
                     "normal_count": normal_count,
-                    "attack_types": attack_types
+                    "attack_types": attack_types,
+                    "analysis_time": analysis_time_formatted,    # Thời gian định dạng
+                    "analysis_time_raw": analysis_time_seconds   # Thời gian thô (giây) để sử dụng trong tính toán khác
                 }
+                
+                print(f"✅ Hoàn thành phân tích với {model_key} trong {analysis_time_formatted}")
+                
             except Exception as e:
                 # Ghi nhận lỗi và bỏ qua model này
                 print(f"❌ Lỗi khi phân tích với model {model_key}: {str(e)}")
                 continue
-        
+
         # Kiểm tra có model nào cho kết quả không
         if not models_results:
             return jsonify({"status": "error", "message": "Không thể phân tích với bất kỳ model nào."})
